@@ -4,6 +4,7 @@ PyYAML
 pandas
 ultralytics
 fastapi
+lap
 uvicorn
 python-multipart
 pyngrok
