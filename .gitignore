@@ -1,0 +1,42 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE files
+.vscode/
+.idea/
+
+# Environment variables / secrets
+.env
+
+# Generated output
+outputs/
+results/
+jobs/
+uploads/
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Large model files
+*.pt
+*.pth
+*.onnx
+
+# Videos
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,19 @@
+# Ultralytics BoT-SORT Tracker Configuration
+# Docs: https://docs.ultralytics.com/modes/track
+
+tracker_type: botsort         # Tracker backend: botsort
+track_high_thresh: 0.25        # First-stage match threshold
+track_low_thresh: 0.1          # Second-stage threshold for low-score matches
+new_track_thresh: 0.25         # Start a new track if no match >= this
+track_buffer: 45               # Frames to keep lost tracks alive (~1.5s @ 30fps)
+match_thresh: 0.7              # Association similarity threshold
+fuse_score: True               # Fuse detection score with motion/IoU for matching
+
+# BoT-SORT camera motion compensation
+gmc_method: orb      # Global motion compensation: sparseOptFlow|orb|sift|ecc|none
+
+# ReID settings
+proximity_thresh: 0.5          # Min IoU to consider tracks proximate for ReID
+appearance_thresh: 0.8         # Min appearance similarity for ReID
+with_reid: True               # Enable ReID model
+model: auto                    # Required: ReID model name/path ("auto")
