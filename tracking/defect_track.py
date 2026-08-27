@@ -366,9 +366,11 @@ class PipelineResult:
                     "defect_type": d.defect_type,
                     "avg_confidence": round(d.avg_confidence, 4),
                     "max_confidence": round(d.max_confidence, 4),
+                    "max_confidence_frame": d.max_confidence_frame,
                     "frames_observed": d.frames_observed,
                     "first_frame": d.first_frame,
                     "last_frame": d.last_frame,
+                    "representative_center": list(d.representative_center),
                     "crop_path": d.representative_crop_path,
                     "source_track_ids": d.source_track_ids,
                 }

@@ -357,7 +357,7 @@ class PipelineVisualizer:
         # Reduction annotation
         if result.total_raw_detections > 0:
             reduction = (1 - result.total_unique_defects / result.total_raw_detections) * 100
-            ax.text(0.98, 0.05, f"📉 {reduction:.1f}% reduction",
+            ax.text(0.98, 0.05, f"{reduction:.1f}% reduction",
                     transform=ax.transAxes, ha="right", va="bottom",
                     fontsize=12, fontweight="bold", color=_ACCENT_GREEN,
                     bbox=dict(boxstyle="round,pad=0.4", facecolor=_CARD_BG,
@@ -530,6 +530,13 @@ def generate_visualizations_from_directory(output_dir: str) -> List[Tuple[str, s
 
     finalized = []
     for d in data.get("finalized_defects", []):
+        # Extract representative_center (may be a list [x,y] or absent)
+        center_data = d.get("representative_center", [0.0, 0.0])
+        if isinstance(center_data, (list, tuple)) and len(center_data) == 2:
+            center = tuple(center_data)
+        else:
+            center = (0.0, 0.0)
+
         defect = FinalizedDefect(
             defect_id=d.get("defect_id", ""),
             defect_type=d.get("defect_type", ""),
@@ -540,6 +547,7 @@ def generate_visualizations_from_directory(output_dir: str) -> List[Tuple[str, s
             last_frame=d.get("last_frame", 0),
             frames_observed=d.get("frames_observed", 0),
             detection_duration_frames=d.get("last_frame", 0) - d.get("first_frame", 0) + 1,
+            representative_center=center,
             source_track_ids=d.get("source_track_ids", []),
         )
         finalized.append(defect)
