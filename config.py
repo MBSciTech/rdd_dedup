@@ -47,6 +47,13 @@ class PipelineConfig:
     - No GPS availability
     """
 
+    # ── SAM2 Segmentation ──
+    enable_segmentation: bool = True
+    sam2_checkpoint_path: str = "C:/Users/MaharshiJB/sam2_lib/sam2/checkpoints/sam2.1_hiera_small.pt"
+    sam2_config_name: str = "configs/sam2.1/sam2.1_hiera_s.yaml"
+    segmentation_crop_padding: int = 15
+    masks_dir_name: str = "masks"
+
     # ── Model ──
     model_path: str = "models/rdd_yolo.pt"
     confidence_threshold: float = 0.25
@@ -133,6 +140,11 @@ class PipelineConfig:
     def to_dict(self) -> Dict:
         """Serialize config to a dictionary (for logging/saving)."""
         return {
+            "enable_segmentation": self.enable_segmentation,
+            "sam2_checkpoint_path": self.sam2_checkpoint_path,
+            "sam2_config_name": self.sam2_config_name,
+            "segmentation_crop_padding": self.segmentation_crop_padding,
+            "masks_dir_name": self.masks_dir_name,
             "model_path": self.model_path,
             "confidence_threshold": self.confidence_threshold,
             "iou_threshold": self.iou_threshold,

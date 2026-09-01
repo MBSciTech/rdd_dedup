@@ -283,6 +283,8 @@ class DefectDatabase:
             "source_track_ids": defect.source_track_ids,
             "created_at": defect.timestamp,
             "severity_score": defect.severity_score,
+            "segmentation_mask": defect.segmentation_mask,
+            "measurement_data": defect.measurement_data,
         }
 
     def _read_json(self) -> Dict:

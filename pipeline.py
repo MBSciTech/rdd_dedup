@@ -38,6 +38,7 @@ from rdd_dedup.tracking.defect_track import (
     Detection, DefectTrack, FinalizedDefect, PipelineResult, TrackStatus,
 )
 from rdd_dedup.verification.duplicate_verifier import DuplicateVerifier
+from rdd_dedup.segmentation.sam2_segmenter import DefectSegmenter
 from rdd_dedup.storage.defect_database import DefectDatabase
 from rdd_dedup.utils.visualizer import PipelineVisualizer
 
@@ -83,6 +84,7 @@ class RDDPipeline:
         # Initialize pipeline components
         self.detector = DefectDetector(self.config)
         self.motion_estimator = MotionEstimator(self.config)
+        self.segmenter = DefectSegmenter(self.config)
         self.track_manager = TrackManager(self.config)
         self.duplicate_verifier: Optional[DuplicateVerifier] = None
         self.database: Optional[DefectDatabase] = None
@@ -161,6 +163,8 @@ class RDDPipeline:
         run_folder_name = os.path.basename(run_output_dir)
         crops_dir = os.path.join(run_output_dir, "crops")
         os.makedirs(crops_dir, exist_ok=True)
+        masks_dir = os.path.join(run_output_dir, self.config.masks_dir_name)
+        os.makedirs(masks_dir, exist_ok=True)
 
         # Open video
         cap = cv2.VideoCapture(video_path)
@@ -224,7 +228,7 @@ class RDDPipeline:
 
                 # Process this frame through the pipeline
                 detections, newly_finalized = self._process_frame(
-                    frame, frame_idx, crops_dir
+                    frame, frame_idx, crops_dir, masks_dir
                 )
 
                 total_raw_detections += len(detections)
@@ -276,7 +280,7 @@ class RDDPipeline:
         for track in remaining:
             recently_finalized = self.track_manager.get_all_finalized()
             self.duplicate_verifier.verify_and_store(
-                track, recently_finalized, crops_dir
+                track, recently_finalized, crops_dir, masks_dir
             )
 
         # Store all unique defects to database
@@ -326,7 +330,7 @@ class RDDPipeline:
 
         # Create verifier with correct frame dimensions
         self.duplicate_verifier = DuplicateVerifier(
-            self.config, frame_width=width, frame_height=height
+            self.config, frame_width=width, frame_height=height, segmenter=self.segmenter
         )
 
         # Create database
@@ -337,6 +341,9 @@ class RDDPipeline:
         # Load detector model (lazy — only loads once)
         if not self.detector.is_loaded:
             self.detector.load_model()
+            
+        if self.config.enable_segmentation and not self.segmenter.is_loaded:
+            self.segmenter.load_model()
 
         self._is_initialized = True
 
@@ -345,6 +352,7 @@ class RDDPipeline:
         frame: np.ndarray,
         frame_idx: int,
         crops_dir: str,
+        masks_dir: str,
     ) -> tuple:
         """
         Process a single frame through the pipeline.
@@ -371,7 +379,7 @@ class RDDPipeline:
         for track in newly_finalized:
             recently_finalized = self.track_manager.get_recently_finalized(frame_idx)
             self.duplicate_verifier.verify_and_store(
-                track, recently_finalized, crops_dir
+                track, recently_finalized, crops_dir, masks_dir
             )
 
         return detections, newly_finalized

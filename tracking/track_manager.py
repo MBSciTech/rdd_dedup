@@ -149,6 +149,14 @@ class TrackManager:
             track.best_crop = crop
             track.best_crop_bbox = det.bbox
 
+        seg_crop = extract_crop(frame, det.bbox, padding=self.config.segmentation_crop_padding)
+        if is_crop_valid(seg_crop):
+            track.best_seg_crop = seg_crop
+            track.best_seg_crop_offset = (
+                max(0, det.bbox[0] - self.config.segmentation_crop_padding),
+                max(0, det.bbox[1] - self.config.segmentation_crop_padding)
+            )
+
         self.active_tracks[det.track_id] = track
         self.total_tracks_created += 1
 
@@ -183,6 +191,14 @@ class TrackManager:
             if is_crop_valid(crop):
                 track.best_crop = crop
                 track.best_crop_bbox = det.bbox
+
+            seg_crop = extract_crop(frame, det.bbox, padding=self.config.segmentation_crop_padding)
+            if is_crop_valid(seg_crop):
+                track.best_seg_crop = seg_crop
+                track.best_seg_crop_offset = (
+                    max(0, det.bbox[0] - self.config.segmentation_crop_padding),
+                    max(0, det.bbox[1] - self.config.segmentation_crop_padding)
+                )
 
     def _mark_lost(self, track_id: int, frame_idx: int):
         """Transition a track from ACTIVE → LOST."""

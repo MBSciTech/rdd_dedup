@@ -96,9 +96,10 @@ class DuplicateVerifier:
     """
 
     def __init__(self, config: PipelineConfig, frame_width: int = 1920,
-                 frame_height: int = 1080):
+                 frame_height: int = 1080, segmenter=None):
         self.config = config
         self.weights = config.weights
+        self.segmenter = segmenter
 
         # Frame diagonal for normalizing spatial distances
         self.frame_diagonal = float(np.sqrt(
@@ -117,6 +118,7 @@ class DuplicateVerifier:
         track: DefectTrack,
         recently_finalized: List[DefectTrack],
         crops_dir: str = "",
+        masks_dir: str = "",
     ) -> FinalizedDefect:
         """
         Verify a newly finalized track against existing unique defects.
@@ -157,8 +159,9 @@ class DuplicateVerifier:
         if best_match is not None and best_score >= self.config.merge_threshold:
             # MERGE — this track is a duplicate
             crop_path = self._save_crop(track, crops_dir) if crops_dir else ""
+            seg_result = self._run_segmentation(track, masks_dir) if masks_dir else None
             new_defect = FinalizedDefect.from_track(
-                track, crop_path, self.config.confidence_method
+                track, crop_path, self.config.confidence_method, segmentation_result=seg_result
             )
             best_match.merge_from(new_defect)
             self.total_merges += 1
@@ -182,8 +185,9 @@ class DuplicateVerifier:
         else:
             # NEW DEFECT — create unique entry
             crop_path = self._save_crop(track, crops_dir) if crops_dir else ""
+            seg_result = self._run_segmentation(track, masks_dir) if masks_dir else None
             new_defect = FinalizedDefect.from_track(
-                track, crop_path, self.config.confidence_method
+                track, crop_path, self.config.confidence_method, segmentation_result=seg_result
             )
             self.unique_defects.append(new_defect)
 
@@ -418,6 +422,87 @@ class DuplicateVerifier:
             logger.warning("Failed to save crop for track #%d: %s",
                            track.track_id, e)
             return ""
+
+    def _run_segmentation(self, track: DefectTrack, masks_dir: str) -> Optional[dict]:
+        if self.segmenter is None or not self.config.enable_segmentation:
+            return None
+        if not is_crop_valid(track.best_seg_crop) or track.best_seg_crop_offset is None:
+            return None
+        if not masks_dir:
+            return None
+            
+        # Compute local box in crop coordinates
+        ox, oy = track.best_seg_crop_offset
+        bx1, by1, bx2, by2 = track.best_crop_bbox
+        local_box = (bx1 - ox, by1 - oy, bx2 - ox, by2 - oy)
+        
+        result = self.segmenter.segment(track.best_seg_crop, local_box)
+        if not result:
+            return None
+            
+        os.makedirs(masks_dir, exist_ok=True)
+        filename = (
+            f"defect_track{track.track_id:04d}_"
+            f"frame{track.max_confidence_frame:06d}_"
+            f"cls{track.class_id}_"
+            f"conf{track.max_confidence:.2f}_mask.png"
+        )
+        filepath = os.path.join(masks_dir, filename)
+        
+        try:
+            # Set mask path in result
+            result["mask_path"] = filepath
+            
+            # result["mask"] is a boolean array, map to 0-255 uint8
+            mask_img = (result["mask"] * 255).astype(np.uint8)
+            cv2.imwrite(filepath, mask_img)
+            
+            # Get consistent BGR color for this class
+            np.random.seed(hash(track.defect_class) % (2**32))
+            b, g, r = np.random.randint(50, 255, 3) # Avoid dark colors
+            color_bgr = (int(b), int(g), int(r))
+            np.random.seed() # Reset seed
+            
+            # Generate 3-panel verification image
+            overlay_filename = filename.replace("_mask.png", "_overlay.png")
+            overlay_filepath = os.path.join(masks_dir, overlay_filename)
+            
+            orig_crop = track.best_seg_crop.copy()
+            
+            # Colorized mask panel
+            colored_mask_panel = np.zeros_like(orig_crop)
+            colored_mask_panel[result["mask"]] = color_bgr
+            
+            # Blended overlay panel
+            blended_panel = orig_crop.copy()
+            alpha = 0.4
+            blended_panel[result["mask"]] = cv2.addWeighted(
+                blended_panel, 1 - alpha, colored_mask_panel, alpha, 0
+            )[result["mask"]]
+            
+            # Stitch them together side-by-side
+            verification_img = cv2.hconcat([orig_crop, colored_mask_panel, blended_panel])
+            
+            # Add text
+            text = f"{track.defect_class} - {result['pixel_area']}px"
+            cv2.putText(verification_img, text, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 
+                        0.7, color_bgr, 2, cv2.LINE_AA)
+            cv2.putText(verification_img, "Crop | Mask | Blended", (10, verification_img.shape[0] - 10), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+            
+            cv2.imwrite(overlay_filepath, verification_img)
+            result["overlay_path"] = overlay_filepath
+            
+        except Exception as e:
+            import traceback
+            logger.warning("Failed to save mask for track #%d: %s", track.track_id, traceback.format_exc())
+            return None
+            
+        return {
+            "mask_path": filepath,
+            "pixel_area": result["pixel_area"],
+            "mask_quality_score": result["quality_score"]
+        }
 
     def set_frame_dimensions(self, width: int, height: int):
         """Update frame dimensions (for center distance normalization)."""
