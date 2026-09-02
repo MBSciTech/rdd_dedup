@@ -30,7 +30,9 @@ class DefectSegmenter:
             return
             
         try:
+            # pyrefly: ignore [missing-import]
             from sam2.build_sam import build_sam2
+            # pyrefly: ignore [missing-import]
             from sam2.sam2_image_predictor import SAM2ImagePredictor
             
             device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -62,6 +64,9 @@ class DefectSegmenter:
             )
             
             mask = masks[0].squeeze()
+            if mask.dtype != bool:
+                mask = mask > 0.0
+            
             score = float(scores[0])
             pixel_area = int(mask.sum())
             

@@ -391,10 +391,49 @@ class RDDPipeline:
         frame_idx: int,
         total_frames: int,
     ) -> np.ndarray:
-        """Draw bounding boxes, track IDs, and HUD overlay on a frame."""
+        """Draw bounding boxes, track IDs, live SAM2 segmentation masks, and HUD overlay on a frame."""
+        # Set SAM2 image once per frame for all detections
+        live_seg_ready = (
+            self.config.enable_segmentation
+            and self.segmenter is not None
+            and self.segmenter.is_loaded
+        )
+        if live_seg_ready:
+            try:
+                img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                self.segmenter.predictor.set_image(img_rgb)
+            except Exception:
+                live_seg_ready = False
+
         for det in detections:
             x1, y1, x2, y2 = det.bbox
             color = ANNOTATION_COLORS[det.class_id % len(ANNOTATION_COLORS)]
+
+            # Live segmentation overlay (predict per detection, image already set)
+            if live_seg_ready:
+                try:
+                    box_np = np.array((x1, y1, x2, y2))
+                    masks, scores, _ = self.segmenter.predictor.predict(
+                        box=box_np, multimask_output=False
+                    )
+                    mask = masks[0].squeeze()
+                    if mask.dtype != bool:
+                        mask = mask > 0.0
+                    # Create colored overlay matching detection color
+                    colored = np.zeros_like(frame)
+                    colored[mask] = color
+                    alpha = 0.35
+                    frame[mask] = cv2.addWeighted(
+                        frame, 1 - alpha, colored, alpha, 0
+                    )[mask]
+                    # Draw mask contour for crisp edges
+                    mask_uint8 = (mask * 255).astype(np.uint8)
+                    contours, _ = cv2.findContours(
+                        mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+                    )
+                    cv2.drawContours(frame, contours, -1, color, 1, cv2.LINE_AA)
+                except Exception:
+                    pass  # Silently skip if segmentation fails for a detection
 
             # Bounding box
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)

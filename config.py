@@ -49,7 +49,7 @@ class PipelineConfig:
 
     # ── SAM2 Segmentation ──
     enable_segmentation: bool = True
-    sam2_checkpoint_path: str = "C:/Users/MaharshiJB/sam2_lib/sam2/checkpoints/sam2.1_hiera_small.pt"
+    sam2_checkpoint_path: str = "models/sam2.1_hiera_small.pt"
     sam2_config_name: str = "configs/sam2.1/sam2.1_hiera_s.yaml"
     segmentation_crop_padding: int = 15
     masks_dir_name: str = "masks"

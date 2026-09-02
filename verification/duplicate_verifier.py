@@ -453,8 +453,14 @@ class DuplicateVerifier:
             # Set mask path in result
             result["mask_path"] = filepath
             
+            # Ensure mask is boolean
+            bool_mask = result["mask"]
+            if bool_mask.dtype != bool:
+                bool_mask = bool_mask > 0.0
+                result["mask"] = bool_mask
+            
             # result["mask"] is a boolean array, map to 0-255 uint8
-            mask_img = (result["mask"] * 255).astype(np.uint8)
+            mask_img = (bool_mask * 255).astype(np.uint8)
             cv2.imwrite(filepath, mask_img)
             
             # Get consistent BGR color for this class
@@ -501,7 +507,8 @@ class DuplicateVerifier:
         return {
             "mask_path": filepath,
             "pixel_area": result["pixel_area"],
-            "mask_quality_score": result["quality_score"]
+            "mask_quality_score": result["quality_score"],
+            "overlay_path": result.get("overlay_path")
         }
 
     def set_frame_dimensions(self, width: int, height: int):
