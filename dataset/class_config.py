@@ -71,7 +71,13 @@ class ClassConfig:
 
     def get_class_id(self, class_name: str) -> int:
         """Get numeric ID by class name. Returns -1 if not found."""
-        return self._name_to_id.get(class_name.upper(), -1)
+        if not class_name:
+            return -1
+        cleaned = class_name.strip().upper()
+        if cleaned in self._name_to_id:
+            return self._name_to_id[cleaned]
+        normalized = cleaned.replace(" ", "_").replace("-", "_")
+        return self._name_to_id.get(normalized, -1)
 
     def get_all_classes(self) -> Dict[int, str]:
         """Return the full {id: name} class dictionary."""
@@ -91,31 +97,45 @@ class ClassConfig:
         """
         Map a model's predicted class name to an RDD_Ahmedabad class.
 
-        Tries exact match first, then case-insensitive partial matching.
-        Returns the original name if no mapping is found.
+        1. Exact match against model_class_mapping
+        2. Case-insensitive & whitespace-trimmed match
+        3. Direct match against known RDD_Ahmedabad dataset classes
+        4. Normalized match (spaces/hyphens to underscores)
+        5. Token match for compound names (e.g. 'D40: Pothole')
+        Returns the original name (or normalized valid class name) if no mapping is found.
         """
-        # Exact match
-        if model_class_name in self.model_class_mapping:
-            return self.model_class_mapping[model_class_name]
+        if not model_class_name:
+            return ""
 
-        # Case-insensitive match
-        lower_name = model_class_name.lower().strip()
+        raw = model_class_name.strip()
+        # 1. Exact match
+        if raw in self.model_class_mapping:
+            return self.model_class_mapping[raw]
+
+        # 2. Case-insensitive match
+        lower_name = raw.lower()
         for key, value in self.model_class_mapping.items():
             if key.lower().strip() == lower_name:
                 return value
 
-        # Partial match — check if any mapping key is contained in the name
+        # 3. Direct match against known RDD dataset classes (case & space/hyphen agnostic)
+        normalized_name = lower_name.replace(" ", "_").replace("-", "_")
+        for cls_name in self.classes.values():
+            if cls_name.lower() == normalized_name:
+                return cls_name
+
+        # 4. Normalized match against mapping keys
         for key, value in self.model_class_mapping.items():
-            if key.lower() in lower_name or lower_name in key.lower():
+            norm_key = key.lower().strip().replace(" ", "_").replace("-", "_")
+            if norm_key == normalized_name:
                 return value
 
-        return model_class_name
+        return raw
 
     def get_suggested_class_id(self, model_class_name: str) -> int:
-        """Map model class name to RDD_Ahmedabad class ID. Returns 0 if unmapped."""
+        """Map model class name to RDD_Ahmedabad class ID. Returns -1 if unmapped."""
         mapped_name = self.map_model_class(model_class_name)
-        cid = self.get_class_id(mapped_name)
-        return cid if cid >= 0 else 0
+        return self.get_class_id(mapped_name)
 
     # ── Persistence ──
 

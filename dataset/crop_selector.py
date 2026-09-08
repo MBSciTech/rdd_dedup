@@ -150,25 +150,32 @@ class CropSelector:
 
         h, w = frame.shape[:2]
 
-        # Reconstruct approximate bbox from representative_center and avg_bbox_area
-        cx, cy = defect.representative_center
-        area = defect.avg_bbox_area
-        ar = defect.avg_aspect_ratio
-
-        if area > 0 and ar > 0:
-            # w_box * h_box = area, w_box / h_box = ar
-            # h_box = sqrt(area / ar), w_box = ar * h_box
-            h_box = int(np.sqrt(area / max(0.01, ar)))
-            w_box = int(ar * h_box)
+        if defect.representative_bbox is not None:
+            rx1, ry1, rx2, ry2 = defect.representative_bbox
+            x1 = max(0, min(w - 1, int(rx1)))
+            y1 = max(0, min(h - 1, int(ry1)))
+            x2 = max(x1 + 1, min(w, int(rx2)))
+            y2 = max(y1 + 1, min(h, int(ry2)))
         else:
-            # Fallback: use bbox_stats if available
-            w_box = 100
-            h_box = 100
+            # Fallback: reconstruct approximate bbox from representative_center and avg_bbox_area
+            cx, cy = defect.representative_center
+            area = defect.avg_bbox_area
+            ar = defect.avg_aspect_ratio
 
-        x1 = max(0, int(cx - w_box / 2))
-        y1 = max(0, int(cy - h_box / 2))
-        x2 = min(w, int(cx + w_box / 2))
-        y2 = min(h, int(cy + h_box / 2))
+            if area > 0 and ar > 0:
+                # w_box * h_box = area, w_box / h_box = ar
+                # h_box = sqrt(area / ar), w_box = ar * h_box
+                h_box = int(np.sqrt(area / max(0.01, ar)))
+                w_box = int(ar * h_box)
+            else:
+                # Fallback: use default 100x100
+                w_box = 100
+                h_box = 100
+
+            x1 = max(0, int(cx - w_box / 2))
+            y1 = max(0, int(cy - h_box / 2))
+            x2 = min(w, int(cx + w_box / 2))
+            y2 = min(h, int(cy + h_box / 2))
 
         # Ensure valid bbox
         if x2 <= x1 or y2 <= y1:

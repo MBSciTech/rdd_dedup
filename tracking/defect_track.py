@@ -221,6 +221,7 @@ class FinalizedDefect:
 
     # Spatial
     representative_center: Tuple[float, float] = (0.0, 0.0)
+    representative_bbox: Optional[Tuple[int, int, int, int]] = None
     avg_bbox_area: float = 0.0
     avg_aspect_ratio: float = 0.0
     bbox_stats: Dict = field(default_factory=dict)
@@ -284,6 +285,7 @@ class FinalizedDefect:
             avg_aspect_ratio=track.avg_aspect_ratio,
             bbox_stats=bbox_stats,
             representative_crop_path=crop_path,
+            representative_bbox=track.best_crop_bbox,
             source_track_ids=[track.track_id],
             source_track_intervals=[(track.first_frame, track.last_frame)],
         )
@@ -315,6 +317,8 @@ class FinalizedDefect:
             self.max_confidence = other.max_confidence
             self.max_confidence_frame = other.max_confidence_frame
             self.representative_center = other.representative_center
+            if other.representative_bbox is not None:
+                self.representative_bbox = other.representative_bbox
             if other.representative_crop_path:
                 self.representative_crop_path = other.representative_crop_path
             if other.cumulative_homography is not None:
@@ -386,6 +390,7 @@ class PipelineResult:
                     "first_frame": d.first_frame,
                     "last_frame": d.last_frame,
                     "representative_center": list(d.representative_center),
+                    "representative_bbox": list(d.representative_bbox) if d.representative_bbox else None,
                     "crop_path": d.representative_crop_path,
                     "source_track_ids": d.source_track_ids,
                     "pixel_area": d.measurement_data.get("pixel_area") if d.measurement_data else None,
@@ -427,6 +432,8 @@ class PipelineResult:
             fd.first_frame = d.get("first_frame", 0)
             fd.last_frame = d.get("last_frame", 0)
             fd.representative_center = tuple(d.get("representative_center", (0.0, 0.0)))
+            if d.get("representative_bbox"):
+                fd.representative_bbox = tuple(d["representative_bbox"])
             fd.representative_crop_path = d.get("crop_path", "")
             fd.source_track_ids = d.get("source_track_ids", [])
             finalized.append(fd)
