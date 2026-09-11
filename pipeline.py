@@ -435,19 +435,74 @@ class RDDPipeline:
                 except Exception:
                     pass  # Silently skip if segmentation fails for a detection
 
-            # Bounding box
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            # Lightweight sci-fi HUD brackets with modulated glow
+            frame_h, frame_w = frame.shape[:2]
+            bw = max(1, x2 - x1)
+            bh = max(1, y2 - y1)
+            corner_len = min(18, max(8, min(bw // 4, bh // 4)))
+            corner_len = min(corner_len, bw // 2, bh // 2)
+            corner_len = max(2, corner_len)
 
-            # Label with track ID
+            base_thickness = 2
+            conf = float(np.clip(det.confidence, 0.0, 1.0))
+            glow_thickness = base_thickness + (3 if conf >= 0.6 else 2)
+            glow_alpha = float(np.clip(0.30 + 0.20 * conf, 0.25, 0.55))
+            pad = glow_thickness // 2 + 1
+
+            corners = [
+                # Top-left
+                ((x1, y1), (x1 + corner_len, y1), (x1, y1), (x1, y1 + corner_len),
+                 max(0, x1 - pad), max(0, y1 - pad), min(frame_w, x1 + corner_len + pad), min(frame_h, y1 + corner_len + pad)),
+                # Top-right
+                ((x2, y1), (x2 - corner_len, y1), (x2, y1), (x2, y1 + corner_len),
+                 max(0, x2 - corner_len - pad), max(0, y1 - pad), min(frame_w, x2 + pad), min(frame_h, y1 + corner_len + pad)),
+                # Bottom-left
+                ((x1, y2), (x1 + corner_len, y2), (x1, y2), (x1, y2 - corner_len),
+                 max(0, x1 - pad), max(0, y2 - corner_len - pad), min(frame_w, x1 + corner_len + pad), min(frame_h, y2 + pad)),
+                # Bottom-right
+                ((x2, y2), (x2 - corner_len, y2), (x2, y2), (x2, y2 - corner_len),
+                 max(0, x2 - corner_len - pad), max(0, y2 - corner_len - pad), min(frame_w, x2 + pad), min(frame_h, y2 + pad)),
+            ]
+
+            # Pass 1: Local ROI glow pass (lower opacity, wider line)
+            for p1, p2, p3, p4, rx1, ry1, rx2, ry2 in corners:
+                if rx2 > rx1 and ry2 > ry1:
+                    roi = frame[ry1:ry2, rx1:rx2]
+                    glow = roi.copy()
+                    cv2.line(glow, (p1[0] - rx1, p1[1] - ry1), (p2[0] - rx1, p2[1] - ry1), color, glow_thickness, cv2.LINE_AA)
+                    cv2.line(glow, (p3[0] - rx1, p3[1] - ry1), (p4[0] - rx1, p4[1] - ry1), color, glow_thickness, cv2.LINE_AA)
+                    cv2.addWeighted(glow, glow_alpha, roi, 1.0 - glow_alpha, 0, dst=roi)
+
+            # Pass 2: Crisp normal-thickness bracket lines
+            for p1, p2, p3, p4, _, _, _, _ in corners:
+                cv2.line(frame, p1, p2, color, base_thickness, cv2.LINE_AA)
+                cv2.line(frame, p3, p4, color, base_thickness, cv2.LINE_AA)
+
+            # HUD chip label (tight padding, dark fill, 1px accent border)
             label = f"#{det.track_id} {det.class_name} {det.confidence:.2f}"
-            (tw, th), _ = cv2.getTextSize(
+            (tw, th), baseline = cv2.getTextSize(
                 label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1
             )
-            cv2.rectangle(
-                frame, (x1, max(0, y1 - 18)), (x1 + tw + 6, y1), color, -1
-            )
+            pad_x = 3
+            pad_y = 2
+            chip_w = tw + 2 * pad_x
+            chip_h = th + baseline + 2 * pad_y
+
+            chip_x1 = max(0, x1)
+            chip_x2 = min(frame_w - 1, chip_x1 + chip_w)
+            if y1 - chip_h - 2 >= 0:
+                chip_y2 = y1 - 2
+                chip_y1 = chip_y2 - chip_h
+            else:
+                chip_y1 = min(frame_h - 1, y1 + 3)
+                chip_y2 = min(frame_h - 1, chip_y1 + chip_h)
+
+            cv2.rectangle(frame, (chip_x1, chip_y1), (chip_x2, chip_y2), (15, 15, 15), -1)
+            cv2.rectangle(frame, (chip_x1, chip_y1), (chip_x2, chip_y2), color, 1)
+            text_x = chip_x1 + pad_x
+            text_y = min(frame_h - 1, chip_y1 + pad_y + th)
             cv2.putText(
-                frame, label, (x1 + 3, max(14, y1 - 4)),
+                frame, label, (text_x, text_y),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1,
                 cv2.LINE_AA,
             )
