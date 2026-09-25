@@ -1,5 +1,8 @@
 # RDD Dedup Pipeline
 
+> ### ⚠️ Proprietary Notice
+> **Copyright (c) 2026 Bhatt Maharshi Jigneshbhai. All Rights Reserved.** > This repository contains confidential and proprietary source code. Direct access to this repository does not grant permission to run, copy, fork, modify, or redistribute any assets. Violations are subject to legal action under applicable intellectual property laws.
+
 A modular Road Defect Detection tracking and deduplication pipeline.
 
 ## Pipeline Flow
