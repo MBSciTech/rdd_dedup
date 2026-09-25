@@ -24,7 +24,7 @@ Video Frame
 
 PROPRIETARY AND CONFIDENTIAL SOURCE CODE LICENSE
 
-Copyright (c) 2026 [Your Full Name or Organization]. All rights reserved.
+Copyright (c) 2026 Bhatt Maharshi Jigneshbhai. All rights reserved.
 
 This source code and related documentation ("Software") are proprietary to and the exclusive property of [Your Full Name or Organization].
 
