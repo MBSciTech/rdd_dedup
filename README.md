@@ -21,3 +21,5 @@ Video Frame
 - `rdd_dedup/verification/` - Duplicate detection and merging
 - `rdd_dedup/storage/` - Defect database layer
 - `rdd_dedup/utils/` - Helper utilities
+
+- Copyright (c) 2026 BHATT MAHARSHI JIGNESHBHAI. All rights reserved. Unauthorized copying, distribution, or modification of this software, via any medium, is strictly prohibited without prior written permission.
