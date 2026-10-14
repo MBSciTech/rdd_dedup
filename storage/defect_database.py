@@ -39,7 +39,8 @@ CREATE TABLE IF NOT EXISTS defects (
     created_at          TEXT,
     segmentation_data   TEXT,
     severity_score      REAL,
-    measurement_data    TEXT
+    measurement_data    TEXT,
+    real_area_m2        REAL
 );
 """
 
@@ -118,8 +119,9 @@ class DefectDatabase:
                 avg_center_x, avg_center_y,
                 avg_bbox_area, avg_aspect_ratio,
                 crop_path, source_track_ids, created_at,
-                segmentation_data, severity_score, measurement_data
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                segmentation_data, severity_score, measurement_data,
+                real_area_m2
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 defect.defect_id,
@@ -143,6 +145,7 @@ class DefectDatabase:
                 json.dumps(defect.segmentation_mask) if defect.segmentation_mask else None,
                 defect.severity_score,
                 json.dumps(defect.measurement_data) if defect.measurement_data else None,
+                defect.real_area_m2,
             ),
         )
         self._connection.commit()
@@ -285,6 +288,7 @@ class DefectDatabase:
             "severity_score": defect.severity_score,
             "segmentation_mask": defect.segmentation_mask,
             "measurement_data": defect.measurement_data,
+            "real_area_m2": defect.real_area_m2,
         }
 
     def _read_json(self) -> Dict:

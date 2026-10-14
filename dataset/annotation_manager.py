@@ -31,7 +31,7 @@ ANNOTATION_CSV_COLUMNS = [
     "image_name",
     "crop_name",
     "class_id",
-    "class_name",
+    "class_name",   
     "confidence",
     "source_video",
     "frame_number",
@@ -163,3 +163,67 @@ class AnnotationManager:
         """Return the last N annotations."""
         df = self.load_annotations()
         return df.tail(n)
+
+    def update_record(
+        self,
+        image_name: str,
+        class_id: int,
+        class_name: str,
+        bbox_x: int,
+        bbox_y: int,
+        bbox_width: int,
+        bbox_height: int,
+    ) -> bool:
+        """
+        Update defect class and bounding box coordinates for a record matching image_name.
+
+        Thread-safe: uses a lock to prevent concurrent write corruption.
+
+        Returns:
+            bool: True if record was found and updated, False otherwise.
+        """
+        with self._lock:
+            df = self.load_annotations()
+            if df.empty:
+                return False
+
+            mask = (df["image_name"] == image_name)
+            if not mask.any():
+                # Fallback check against crop_name
+                mask = (df["crop_name"] == image_name)
+            if not mask.any():
+                return False
+
+            df.loc[mask, "class_id"] = int(class_id)
+            df.loc[mask, "class_name"] = str(class_name)
+            df.loc[mask, "bbox_x"] = int(bbox_x)
+            df.loc[mask, "bbox_y"] = int(bbox_y)
+            df.loc[mask, "bbox_width"] = int(bbox_width)
+            df.loc[mask, "bbox_height"] = int(bbox_height)
+
+            df.to_csv(self.csv_path, index=False, encoding="utf-8")
+            return True
+
+    def delete_record(self, image_name: str) -> bool:
+        """
+        Delete an annotation record matching image_name from annotations.csv.
+
+        Thread-safe: uses a lock to prevent concurrent write corruption.
+
+        Returns:
+            bool: True if record was found and deleted, False otherwise.
+        """
+        with self._lock:
+            df = self.load_annotations()
+            if df.empty:
+                return False
+
+            mask = (df["image_name"] == image_name)
+            if not mask.any():
+                mask = (df["crop_name"] == image_name)
+            if not mask.any():
+                return False
+
+            df_remaining = df[~mask]
+            df_remaining.to_csv(self.csv_path, index=False, encoding="utf-8")
+            return True

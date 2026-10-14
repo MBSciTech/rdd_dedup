@@ -13,6 +13,11 @@ from typing import Dict, List, Optional
 
 from rdd_dedup.config import PipelineConfig
 from rdd_dedup.tracking.defect_track import Detection
+from rdd_dedup.measurement.area_calculator import (
+    CameraParams,
+    compute_defect_area,
+    is_area_eligible_class,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +170,19 @@ class DefectDetector:
             if boxes is None or len(boxes) == 0:
                 continue
 
+            # Build camera parameters for ground projection from frame shape
+            img_h = r.orig_shape[0] if hasattr(r, "orig_shape") and r.orig_shape else 1080
+            img_w = r.orig_shape[1] if hasattr(r, "orig_shape") and r.orig_shape else 1920
+            camera_params = CameraParams(
+                yc=getattr(self.config, "camera_height_m", 1.2),
+                tilt_deg=getattr(self.config, "camera_tilt_deg", 15.0),
+                f=getattr(self.config, "camera_focal_length_px", None),
+                cx=getattr(self.config, "camera_cx", None),
+                cy=getattr(self.config, "camera_cy", None),
+                image_width=img_w,
+                image_height=img_h,
+            )
+
             for i, box in enumerate(boxes):
                 # Extract class and confidence
                 cls_id = int(box.cls[0].item())
@@ -188,6 +206,19 @@ class DefectDetector:
                 # Compute center
                 center = Detection.compute_center((x1, y1, x2, y2))
 
+                # Extract YOLO segmentation mask polygon if present
+                polygon = None
+                if hasattr(r, "masks") and r.masks is not None:
+                    if hasattr(r.masks, "xy") and len(r.masks.xy) > i:
+                        poly_cand = r.masks.xy[i]
+                        if poly_cand is not None and len(poly_cand) >= 3:
+                            polygon = poly_cand
+
+                # Calculate real-world ground area ONLY for Pothole, Manhole, and Patch
+                area_m2 = None
+                if is_area_eligible_class(class_name):
+                    area_m2 = compute_defect_area((x1, y1, x2, y2), camera_params, class_name, polygon)
+
                 detections.append(Detection(
                     track_id=track_id,
                     class_id=cls_id,
@@ -196,6 +227,8 @@ class DefectDetector:
                     bbox=(x1, y1, x2, y2),
                     center=center,
                     frame_idx=frame_idx,
+                    polygon=polygon,
+                    area_m2=area_m2,
                 ))
 
         return detections

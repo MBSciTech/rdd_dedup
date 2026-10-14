@@ -332,3 +332,135 @@ class DatasetManager:
                 md += f"- `{video}` → **{split}**\n"
 
         return md
+
+    def update_defect(
+        self,
+        image_name: str,
+        split: str,
+        old_class_name: str,
+        new_class_id: int,
+        new_class_name: str,
+        bbox: Tuple[int, int, int, int],
+        crop_image: Optional[np.ndarray] = None,
+        crop_name: Optional[str] = None,
+    ) -> Dict[str, str]:
+        """
+        Update an existing defect annotation: updates crop file, YOLO label,
+        and moves crop if defect class was changed.
+
+        Args:
+            image_name: Image filename (e.g. video_f001_t1.jpg)
+            split: Dataset split ('train', 'val', 'test')
+            old_class_name: Original class name string (e.g. 'POTHOLE')
+            new_class_id: New class numeric ID
+            new_class_name: New class name string
+            bbox: Tuple (x1, y1, x2, y2) in pixel coordinates
+            crop_image: Optional updated crop image as numpy array
+            crop_name: Optional crop filename, defaults to {stem}_crop.jpg
+
+        Returns:
+            Dict containing updated paths.
+        """
+        stem = os.path.splitext(image_name)[0]
+        crop_filename = crop_name or f"{stem}_crop.jpg"
+        image_path = os.path.join(self.images_dir, split, image_name)
+        label_path = os.path.join(self.labels_dir, split, f"{stem}.txt")
+
+        old_crop_path = os.path.join(self.crops_dir, old_class_name, crop_filename)
+        new_class_dir = os.path.join(self.crops_dir, new_class_name)
+        os.makedirs(new_class_dir, exist_ok=True)
+        new_crop_path = os.path.join(new_class_dir, crop_filename)
+
+        frame = None
+        if os.path.exists(image_path):
+            frame = cv2.imread(image_path)
+
+        # 1. Update/Save crop image
+        x1, y1, x2, y2 = [int(v) for v in bbox]
+        if crop_image is not None and crop_image.size > 0:
+            cv2.imwrite(new_crop_path, crop_image, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        elif frame is not None and frame.size > 0:
+            h, w = frame.shape[:2]
+            cx1 = max(0, min(w, x1))
+            cy1 = max(0, min(h, y1))
+            cx2 = max(0, min(w, x2))
+            cy2 = max(0, min(h, y2))
+            if cx2 > cx1 and cy2 > cy1:
+                extracted = frame[cy1:cy2, cx1:cx2]
+                cv2.imwrite(new_crop_path, extracted, [cv2.IMWRITE_JPEG_QUALITY, 90])
+
+        # If class changed and old crop exists at a different path, delete old crop
+        if old_crop_path != new_crop_path and os.path.exists(old_crop_path):
+            try:
+                os.remove(old_crop_path)
+            except OSError:
+                pass
+
+        # 2. Update YOLO label file
+        if frame is not None and frame.size > 0:
+            h, w = frame.shape[:2]
+            center_x = max(0.0, min(1.0, ((x1 + x2) / 2.0) / w))
+            center_y = max(0.0, min(1.0, ((y1 + y2) / 2.0) / h))
+            bbox_w = max(0.0, min(1.0, (x2 - x1) / w))
+            bbox_h = max(0.0, min(1.0, (y2 - y1) / h))
+
+            with open(label_path, "w", encoding="utf-8") as f:
+                f.write(f"{new_class_id} {center_x:.6f} {center_y:.6f} {bbox_w:.6f} {bbox_h:.6f}\n")
+
+        return {
+            "image": image_path,
+            "label": label_path,
+            "crop": new_crop_path,
+            "crop_filename": crop_filename,
+        }
+
+    def delete_defect(
+        self,
+        image_name: str,
+        split: str,
+        class_name: str,
+        crop_name: Optional[str] = None,
+    ) -> bool:
+        """
+        Delete a defect from the dataset: deletes crop image, YOLO label,
+        and original frame image.
+
+        Args:
+            image_name: Image filename
+            split: Dataset split ('train', 'val', 'test')
+            class_name: Class name folder for the crop
+            crop_name: Optional crop filename
+
+        Returns:
+            bool: True if deleted successfully
+        """
+        stem = os.path.splitext(image_name)[0]
+        crop_filename = crop_name or f"{stem}_crop.jpg"
+
+        crop_path = os.path.join(self.crops_dir, class_name, crop_filename)
+        if os.path.exists(crop_path):
+            try:
+                os.remove(crop_path)
+            except OSError:
+                pass
+
+        label_path = os.path.join(self.labels_dir, split, f"{stem}.txt")
+        if os.path.exists(label_path):
+            try:
+                os.remove(label_path)
+            except OSError:
+                pass
+
+        image_path = os.path.join(self.images_dir, split, image_name)
+        if os.path.exists(image_path):
+            try:
+                os.remove(image_path)
+            except OSError:
+                pass
+
+        try:
+            self.update_data_yaml()
+        except Exception:
+            pass
+
+        return True

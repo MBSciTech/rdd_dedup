@@ -47,12 +47,20 @@ class PipelineConfig:
     - No GPS availability
     """
 
-    # ── SAM2 Segmentation ──
+    # ── Segmentation (YOLO-seg) ──
     enable_segmentation: bool = True
+    yolo_seg_model_path: str = "models/experiments/previuse_yolo.pt"
     sam2_checkpoint_path: str = "models/sam2.1_hiera_small.pt"
     sam2_config_name: str = "configs/sam2.1/sam2.1_hiera_s.yaml"
     segmentation_crop_padding: int = 15
     masks_dir_name: str = "masks"
+
+    # ── Camera Calibration for Area Estimation ──
+    camera_height_m: float = 1.2         # Height of camera above road (meters)
+    camera_tilt_deg: float = 15.0        # Downward camera tilt angle (degrees)
+    camera_focal_length_px: Optional[float] = None  # None = auto-calculate from frame width
+    camera_cx: Optional[float] = None    # None = width / 2.0
+    camera_cy: Optional[float] = None    # None = height / 2.0
 
     # ── Model ──
     model_path: str = "models/rdd_yolo.pt"
@@ -141,10 +149,16 @@ class PipelineConfig:
         """Serialize config to a dictionary (for logging/saving)."""
         return {
             "enable_segmentation": self.enable_segmentation,
+            "yolo_seg_model_path": self.yolo_seg_model_path,
             "sam2_checkpoint_path": self.sam2_checkpoint_path,
             "sam2_config_name": self.sam2_config_name,
             "segmentation_crop_padding": self.segmentation_crop_padding,
             "masks_dir_name": self.masks_dir_name,
+            "camera_height_m": self.camera_height_m,
+            "camera_tilt_deg": self.camera_tilt_deg,
+            "camera_focal_length_px": self.camera_focal_length_px,
+            "camera_cx": self.camera_cx,
+            "camera_cy": self.camera_cy,
             "model_path": self.model_path,
             "confidence_threshold": self.confidence_threshold,
             "iou_threshold": self.iou_threshold,

@@ -38,7 +38,7 @@ from rdd_dedup.tracking.defect_track import (
     Detection, DefectTrack, FinalizedDefect, PipelineResult, TrackStatus,
 )
 from rdd_dedup.verification.duplicate_verifier import DuplicateVerifier
-from rdd_dedup.segmentation.sam2_segmenter import DefectSegmenter
+from rdd_dedup.segmentation import DefectSegmenter
 from rdd_dedup.storage.defect_database import DefectDatabase
 from rdd_dedup.utils.visualizer import PipelineVisualizer
 
@@ -391,63 +391,39 @@ class RDDPipeline:
         frame_idx: int,
         total_frames: int,
     ) -> np.ndarray:
-        """Draw bounding boxes, track IDs, live SAM2 segmentation masks, and HUD overlay on a frame."""
-        # Set SAM2 image once per frame for all detections
-        live_seg_ready = (
-            self.config.enable_segmentation
-            and self.segmenter is not None
-            and self.segmenter.is_loaded
-        )
-        if live_seg_ready:
-            try:
-                img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                self.segmenter.predictor.set_image(img_rgb)
-            except Exception:
-                live_seg_ready = False
-
+        """Draw bounding boxes, track IDs, YOLO segmentation masks, real-world area (m²), and HUD overlay on a frame."""
         for det in detections:
             x1, y1, x2, y2 = det.bbox
             color = ANNOTATION_COLORS[det.class_id % len(ANNOTATION_COLORS)]
 
-            # Live segmentation overlay (predict per detection, image already set)
-            if live_seg_ready:
+            # Live YOLO segmentation overlay and crisp contour
+            if det.polygon is not None and len(det.polygon) >= 3:
                 try:
-                    box_np = np.array((x1, y1, x2, y2))
-                    masks, scores, _ = self.segmenter.predictor.predict(
-                        box=box_np, multimask_output=False
-                    )
-                    mask = masks[0].squeeze()
-                    if mask.dtype != bool:
-                        mask = mask > 0.0
-                    # Create colored overlay matching detection color
-                    colored = np.zeros_like(frame)
-                    colored[mask] = color
-                    alpha = 0.35
-                    frame[mask] = cv2.addWeighted(
-                        frame, 1 - alpha, colored, alpha, 0
-                    )[mask]
-                    # Draw mask contour for crisp edges
-                    mask_uint8 = (mask * 255).astype(np.uint8)
-                    contours, _ = cv2.findContours(
-                        mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-                    )
-                    cv2.drawContours(frame, contours, -1, color, 1, cv2.LINE_AA)
+                    poly_pts = np.int32([det.polygon])
+                    overlay = frame.copy()
+                    cv2.fillPoly(overlay, poly_pts, color)
+                    cv2.addWeighted(overlay, 0.35, frame, 0.65, 0, frame)
+                    cv2.polylines(frame, poly_pts, isClosed=True, color=color, thickness=2, lineType=cv2.LINE_AA)
                 except Exception:
-                    pass  # Silently skip if segmentation fails for a detection
+                    pass
 
             # Bounding box
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
 
-            # Label with track ID
-            label = f"#{det.track_id} {det.class_name} {det.confidence:.2f}"
+            # Label with track ID, confidence, and estimated ground area (Pothole, Manhole, Patch only)
+            if det.area_m2 is not None and det.area_m2 > 0:
+                label = f"#{det.track_id} {det.class_name} {det.confidence:.2f} | {det.area_m2:.2f} m2"
+            else:
+                label = f"#{det.track_id} {det.class_name} {det.confidence:.2f}"
+
             (tw, th), _ = cv2.getTextSize(
                 label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1
             )
             cv2.rectangle(
-                frame, (x1, max(0, y1 - 18)), (x1 + tw + 6, y1), color, -1
+                frame, (x1, max(0, y1 - 20)), (x1 + tw + 6, y1), color, -1
             )
             cv2.putText(
-                frame, label, (x1 + 3, max(14, y1 - 4)),
+                frame, label, (x1 + 3, max(14, y1 - 5)),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1,
                 cv2.LINE_AA,
             )

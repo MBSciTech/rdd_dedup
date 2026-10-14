@@ -39,6 +39,8 @@ class Detection:
     bbox: Tuple[int, int, int, int]         # (x1, y1, x2, y2) pixel coordinates
     center: Tuple[float, float]            # (cx, cy) center of bounding box
     frame_idx: int                          # Frame index in the video
+    polygon: Optional[np.ndarray] = None    # (N, 2) pixel coordinates if segmentation available
+    area_m2: Optional[float] = None         # Estimated real-world ground area in m² (Pothole, Manhole, Patch)
 
     @staticmethod
     def compute_center(bbox: Tuple[int, int, int, int]) -> Tuple[float, float]:
@@ -95,6 +97,10 @@ class DefectTrack:
 
     # Motion
     cumulative_homography: Optional[np.ndarray] = field(default=None, repr=False)
+
+    # Ground Area
+    area_m2_history: List[float] = field(default_factory=list)
+    representative_area_m2: Optional[float] = None
 
     # Status
     status: TrackStatus = TrackStatus.ACTIVE
@@ -243,6 +249,7 @@ class FinalizedDefect:
     segmentation_mask: Optional[Any] = None
     severity_score: Optional[float] = None
     measurement_data: Optional[Dict] = None
+    real_area_m2: Optional[float] = None        # Physical ground area in m² (Pothole, Manhole, Patch)
 
     @classmethod
     def from_track(cls, track: DefectTrack, crop_path: str = "",
@@ -289,13 +296,24 @@ class FinalizedDefect:
             source_track_ids=[track.track_id],
             source_track_intervals=[(track.first_frame, track.last_frame)],
         )
+
+        # Ground area estimation
+        if track.representative_area_m2 is not None:
+            fd.real_area_m2 = round(float(track.representative_area_m2), 4)
+        elif track.area_m2_history:
+            fd.real_area_m2 = round(float(np.mean(track.area_m2_history)), 4)
         
         if segmentation_result:
             fd.segmentation_mask = segmentation_result.get("mask_path")
             fd.measurement_data = {
                 "pixel_area": segmentation_result.get("pixel_area"),
                 "mask_quality_score": segmentation_result.get("mask_quality_score"),
-                "overlay_path": segmentation_result.get("overlay_path")
+                "overlay_path": segmentation_result.get("overlay_path"),
+                "real_area_m2": fd.real_area_m2,
+            }
+        elif fd.real_area_m2 is not None:
+            fd.measurement_data = {
+                "real_area_m2": fd.real_area_m2,
             }
         return fd
 
@@ -321,6 +339,10 @@ class FinalizedDefect:
                 self.representative_bbox = other.representative_bbox
             if other.representative_crop_path:
                 self.representative_crop_path = other.representative_crop_path
+            if other.real_area_m2 is not None:
+                self.real_area_m2 = other.real_area_m2
+        elif self.real_area_m2 is None and other.real_area_m2 is not None:
+            self.real_area_m2 = other.real_area_m2
             if other.cumulative_homography is not None:
                 self.cumulative_homography = other.cumulative_homography
             if other.segmentation_mask is not None:
@@ -395,6 +417,7 @@ class PipelineResult:
                     "source_track_ids": d.source_track_ids,
                     "pixel_area": d.measurement_data.get("pixel_area") if d.measurement_data else None,
                     "mask_path": d.segmentation_mask,
+                    "real_area_m2": d.real_area_m2,
                 }
                 for d in self.finalized_defects
             ],
@@ -436,6 +459,9 @@ class PipelineResult:
                 fd.representative_bbox = tuple(d["representative_bbox"])
             fd.representative_crop_path = d.get("crop_path", "")
             fd.source_track_ids = d.get("source_track_ids", [])
+            fd.real_area_m2 = d.get("real_area_m2")
+            if fd.real_area_m2 is not None:
+                fd.measurement_data = {"real_area_m2": fd.real_area_m2}
             finalized.append(fd)
             
         res.finalized_defects = finalized

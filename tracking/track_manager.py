@@ -157,6 +157,11 @@ class TrackManager:
                 max(0, det.bbox[1] - self.config.segmentation_crop_padding)
             )
 
+        # Record physical area if computed
+        if det.area_m2 is not None:
+            track.area_m2_history.append(det.area_m2)
+            track.representative_area_m2 = det.area_m2
+
         self.active_tracks[det.track_id] = track
         self.total_tracks_created += 1
 
@@ -179,6 +184,8 @@ class TrackManager:
         track.confidence_history.append(det.confidence)
         track.bbox_history.append(det.bbox)
         track.center_history.append(det.center)
+        if det.area_m2 is not None:
+            track.area_m2_history.append(det.area_m2)
         track.invalidate_cache()
 
         # Update best crop if this frame has higher confidence
@@ -186,6 +193,8 @@ class TrackManager:
             track.max_confidence = det.confidence
             track.max_confidence_frame = frame_idx
             track.cumulative_homography = cumulative_homography
+            if det.area_m2 is not None:
+                track.representative_area_m2 = det.area_m2
 
             crop = extract_crop(frame, det.bbox)
             if is_crop_valid(crop):
