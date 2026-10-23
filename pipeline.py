@@ -39,6 +39,7 @@ from rdd_dedup.tracking.defect_track import (
 )
 from rdd_dedup.verification.duplicate_verifier import DuplicateVerifier
 from rdd_dedup.segmentation import DefectSegmenter
+from rdd_dedup.measurement.orientation import FrameOrientationProvider
 from rdd_dedup.storage.defect_database import DefectDatabase
 from rdd_dedup.utils.visualizer import PipelineVisualizer
 
@@ -184,8 +185,8 @@ class RDDPipeline:
             total_frames if total_frames > 0 else -1,
         )
 
-        # Initialize components with video dimensions
-        self._initialize_for_video(width, height, run_output_dir)
+        # Initialize components with video dimensions and auto-discovered sensor telemetry
+        self._initialize_for_video(width, height, run_output_dir, video_path=video_path)
 
         # Set up annotated video writer
         video_writer = None
@@ -321,12 +322,48 @@ class RDDPipeline:
         return result
 
     def _initialize_for_video(
-        self, width: int, height: int, output_dir: str
+        self, width: int, height: int, output_dir: str, video_path: str = ""
     ):
-        """Initialize/reset all components for a new video."""
+        """Initialize/reset all components for a new video, including sensor orientation telemetry."""
         # Reset stateful components
         self.motion_estimator.reset()
         self.track_manager.reset()
+
+        # Initialize FrameOrientationProvider if enabled and sensor files exist
+        self.orientation_provider = None
+        if getattr(self.config, "use_sensor_orientation", True):
+            sensor_csv = getattr(self.config, "sensor_csv_path", None)
+            frame_csv = getattr(self.config, "frame_csv_path", None)
+
+            # Auto-discover sensor CSVs near video if not explicitly configured
+            if not (sensor_csv and frame_csv) and video_path:
+                v_dir = os.path.dirname(os.path.abspath(video_path))
+                cand_s = os.path.join(v_dir, "sensor_data.csv")
+                cand_f = os.path.join(v_dir, "frame_coordinates.csv")
+                if os.path.exists(cand_s) and os.path.exists(cand_f):
+                    sensor_csv, frame_csv = cand_s, cand_f
+                else:
+                    # Check in sibling survey folders
+                    parent_dir = os.path.dirname(v_dir)
+                    if os.path.exists(parent_dir):
+                        for root, _, files in os.walk(parent_dir):
+                            if "sensor_data.csv" in files and "frame_coordinates.csv" in files:
+                                sensor_csv = os.path.join(root, "sensor_data.csv")
+                                frame_csv = os.path.join(root, "frame_coordinates.csv")
+                                break
+
+            if sensor_csv and frame_csv and os.path.exists(sensor_csv) and os.path.exists(frame_csv):
+                try:
+                    self.orientation_provider = FrameOrientationProvider(
+                        sensor_csv_path=sensor_csv,
+                        frame_csv_path=frame_csv,
+                        smooth_sec=getattr(self.config, "sensor_smooth_sec", 0.25),
+                    )
+                    if self.orientation_provider.is_available:
+                        self.detector.orientation_provider = self.orientation_provider
+                        logger.info("Attached FrameOrientationProvider to DefectDetector.")
+                except Exception as e:
+                    logger.warning("Could not initialize FrameOrientationProvider: %s", e)
 
         # Create verifier with correct frame dimensions
         self.duplicate_verifier = DuplicateVerifier(
@@ -510,7 +547,30 @@ class RDDPipeline:
                 audit_path, len(self.duplicate_verifier.merge_log),
             )
 
-        # Tracking statistics
+        # Compute quality gating rejection fractions
+        total_raw = max(1, result.total_raw_detections)
+        rejection_counts = getattr(self.detector, "rejection_counts", {})
+        rejection_fractions = {
+            reason: round(count / total_raw, 4) for reason, count in rejection_counts.items()
+        }
+
+        # Log orientation and quality control metrics
+        if self.orientation_provider and self.orientation_provider.is_available:
+            logger.info(
+                "Survey Orientation Summary: Mean Tilt=%.1f°±%.1f°, Mean Roll=%.1f°±%.1f°",
+                self.orientation_provider.mean_tilt_deg or 0.0,
+                self.orientation_provider.std_tilt_deg or 0.0,
+                self.orientation_provider.mean_roll_deg or 0.0,
+                self.orientation_provider.std_roll_deg or 0.0,
+            )
+
+        if rejection_counts:
+            logger.info(
+                "Quality Gating Rejections: counts=%s, fraction_of_detections=%s",
+                rejection_counts, rejection_fractions
+            )
+
+        # Tracking and measurement statistics
         stats_path = os.path.join(output_dir, "tracking_stats.json")
         with open(stats_path, "w", encoding="utf-8") as f:
             json.dump(
@@ -521,6 +581,12 @@ class RDDPipeline:
                     "motion_estimator": {
                         "last_inlier_ratio": self.motion_estimator.last_inlier_ratio,
                         "last_num_matches": self.motion_estimator.last_num_matches,
+                    },
+                    "orientation_telemetry": self.orientation_provider.get_stats()
+                    if self.orientation_provider else None,
+                    "quality_gating": {
+                        "rejection_counts": rejection_counts,
+                        "rejection_fractions": rejection_fractions,
                     },
                     "config": self.config.to_dict(),
                 },

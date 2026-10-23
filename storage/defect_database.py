@@ -40,7 +40,11 @@ CREATE TABLE IF NOT EXISTS defects (
     segmentation_data   TEXT,
     severity_score      REAL,
     measurement_data    TEXT,
-    real_area_m2        REAL
+    real_area_m2        REAL,
+    area_sample_count   INTEGER DEFAULT 0,
+    area_iqr_m2         REAL,
+    avg_tilt_deg        REAL,
+    area_method         TEXT
 );
 """
 
@@ -79,11 +83,29 @@ class DefectDatabase:
             raise ValueError(f"Unsupported database type: {db_type}")
 
     def _init_sqlite(self):
-        """Initialize SQLite database with schema."""
+        """Initialize SQLite database with schema and run safe column migrations."""
         os.makedirs(os.path.dirname(self.db_path) or ".", exist_ok=True)
         self._connection = sqlite3.connect(self.db_path)
         self._connection.row_factory = sqlite3.Row
         self._connection.execute(DEFECT_TABLE_SCHEMA)
+
+        # Safe migrations: add new columns if table already existed without breaking old databases
+        cursor = self._connection.cursor()
+        cursor.execute("PRAGMA table_info(defects)")
+        existing_cols = {row["name"] for row in cursor.fetchall()}
+        new_cols = [
+            ("area_sample_count", "INTEGER DEFAULT 0"),
+            ("area_iqr_m2", "REAL"),
+            ("avg_tilt_deg", "REAL"),
+            ("area_method", "TEXT"),
+        ]
+        for col_name, col_type in new_cols:
+            if col_name not in existing_cols:
+                try:
+                    self._connection.execute(f"ALTER TABLE defects ADD COLUMN {col_name} {col_type}")
+                except Exception as e:
+                    logger.debug("Safe column migration %s: %s", col_name, e)
+
         self._connection.commit()
         logger.info("SQLite database initialized at: %s", self.db_path)
 
@@ -120,8 +142,9 @@ class DefectDatabase:
                 avg_bbox_area, avg_aspect_ratio,
                 crop_path, source_track_ids, created_at,
                 segmentation_data, severity_score, measurement_data,
-                real_area_m2
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                real_area_m2, area_sample_count, area_iqr_m2, avg_tilt_deg,
+                area_method
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 defect.defect_id,
@@ -146,6 +169,10 @@ class DefectDatabase:
                 defect.severity_score,
                 json.dumps(defect.measurement_data) if defect.measurement_data else None,
                 defect.real_area_m2,
+                getattr(defect, "area_sample_count", 0),
+                getattr(defect, "area_iqr_m2", None),
+                getattr(defect, "avg_tilt_deg", None),
+                getattr(defect, "area_method", "fixed_tilt"),
             ),
         )
         self._connection.commit()
@@ -289,6 +316,10 @@ class DefectDatabase:
             "segmentation_mask": defect.segmentation_mask,
             "measurement_data": defect.measurement_data,
             "real_area_m2": defect.real_area_m2,
+            "area_sample_count": getattr(defect, "area_sample_count", 0),
+            "area_iqr_m2": getattr(defect, "area_iqr_m2", None),
+            "avg_tilt_deg": getattr(defect, "avg_tilt_deg", None),
+            "area_method": getattr(defect, "area_method", "fixed_tilt"),
         }
 
     def _read_json(self) -> Dict:

@@ -11,6 +11,7 @@ from rdd_dedup.measurement.area_calculator import (
     compute_defect_area_from_bbox,
     compute_defect_area_from_points,
 )
+from rdd_dedup.measurement.orientation import FrameOrientationProvider
 
 __all__ = [
     "CameraParams",
@@ -20,4 +21,5 @@ __all__ = [
     "compute_defect_area",
     "compute_defect_area_from_bbox",
     "compute_defect_area_from_points",
+    "FrameOrientationProvider",
 ]

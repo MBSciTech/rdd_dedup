@@ -157,10 +157,14 @@ class TrackManager:
                 max(0, det.bbox[1] - self.config.segmentation_crop_padding)
             )
 
-        # Record physical area if computed
+        # Record physical area and camera attitude if computed
         if det.area_m2 is not None:
             track.area_m2_history.append(det.area_m2)
             track.representative_area_m2 = det.area_m2
+        if det.tilt_deg_used is not None:
+            track.tilt_deg_history.append(det.tilt_deg_used)
+        if det.roll_deg_used is not None:
+            track.roll_deg_history.append(det.roll_deg_used)
 
         self.active_tracks[det.track_id] = track
         self.total_tracks_created += 1
@@ -186,6 +190,10 @@ class TrackManager:
         track.center_history.append(det.center)
         if det.area_m2 is not None:
             track.area_m2_history.append(det.area_m2)
+        if det.tilt_deg_used is not None:
+            track.tilt_deg_history.append(det.tilt_deg_used)
+        if det.roll_deg_used is not None:
+            track.roll_deg_history.append(det.roll_deg_used)
         track.invalidate_cache()
 
         # Update best crop if this frame has higher confidence

@@ -59,8 +59,24 @@ class PipelineConfig:
     camera_height_m: float = 1.2         # Height of camera above road (meters)
     camera_tilt_deg: float = 15.0        # Downward camera tilt angle (degrees)
     camera_focal_length_px: Optional[float] = None  # None = auto-calculate from frame width
-    camera_cx: Optional[float] = None    # None = width / 2.0
-    camera_cy: Optional[float] = None    # None = height / 2.0
+    camera_fx: Optional[float] = None    # Horizontal focal length (pixels)
+    camera_fy: Optional[float] = None    # Vertical focal length (pixels)
+    camera_cx: Optional[float] = None    # Principal point x (None = width / 2.0)
+    camera_cy: Optional[float] = None    # Principal point y (None = height / 2.0)
+    frame_width: int = 1920              # Configurable frame width
+    frame_height: int = 1080             # Configurable frame height
+
+    # ── Accelerometer Gravity Orientation & Quality Gating ──
+    use_sensor_orientation: bool = True  # Enable per-frame accelerometer gravity orientation
+    sensor_smooth_sec: float = 0.25      # Rolling mean window for accelerometer smoothing (seconds)
+    min_tilt_deg: float = 3.0            # Minimum valid downward camera tilt (degrees)
+    max_tilt_deg: float = 60.0           # Maximum valid downward camera tilt (degrees)
+    max_abs_roll_deg: float = 30.0       # Maximum valid absolute camera roll (degrees)
+    min_ground_distance_m: float = 0.5   # Minimum valid forward distance to defect (meters)
+    max_ground_distance_m: float = 8.0   # Maximum valid forward distance to defect (meters)
+    sensor_csv_path: Optional[str] = None   # Explicit path to sensor_data.csv (optional)
+    frame_csv_path: Optional[str] = None    # Explicit path to frame_coordinates.csv (optional)
+    min_laplacian_var: Optional[float] = None # Optional Laplacian blur rejection threshold
 
     # ── Model ──
     model_path: str = "models/rdd_yolo.pt"
@@ -182,6 +198,17 @@ class PipelineConfig:
                 "confidence_trend": self.weights.confidence_trend,
                 "temporal_gap": self.weights.temporal_gap,
             },
+            "camera_fx": self.camera_fx,
+            "camera_fy": self.camera_fy,
+            "frame_width": self.frame_width,
+            "frame_height": self.frame_height,
+            "use_sensor_orientation": self.use_sensor_orientation,
+            "sensor_smooth_sec": self.sensor_smooth_sec,
+            "min_tilt_deg": self.min_tilt_deg,
+            "max_tilt_deg": self.max_tilt_deg,
+            "max_abs_roll_deg": self.max_abs_roll_deg,
+            "min_ground_distance_m": self.min_ground_distance_m,
+            "max_ground_distance_m": self.max_ground_distance_m,
             "confidence_method": self.confidence_method,
             "output_dir": self.output_dir,
             "database_type": self.database_type,
@@ -189,3 +216,32 @@ class PipelineConfig:
             "save_crops": self.save_crops,
             "enable_gpu": self.enable_gpu,
         }
+
+    # ── Uppercase Aliases for Specification Compatibility ──
+    @property
+    def USE_SENSOR_ORIENTATION(self) -> bool:
+        return self.use_sensor_orientation
+
+    @property
+    def SENSOR_SMOOTH_SEC(self) -> float:
+        return self.sensor_smooth_sec
+
+    @property
+    def MIN_TILT_DEG(self) -> float:
+        return self.min_tilt_deg
+
+    @property
+    def MAX_TILT_DEG(self) -> float:
+        return self.max_tilt_deg
+
+    @property
+    def MAX_ABS_ROLL_DEG(self) -> float:
+        return self.max_abs_roll_deg
+
+    @property
+    def MIN_GROUND_DISTANCE_M(self) -> float:
+        return self.min_ground_distance_m
+
+    @property
+    def MAX_GROUND_DISTANCE_M(self) -> float:
+        return self.max_ground_distance_m

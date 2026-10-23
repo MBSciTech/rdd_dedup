@@ -41,6 +41,8 @@ class Detection:
     frame_idx: int                          # Frame index in the video
     polygon: Optional[np.ndarray] = None    # (N, 2) pixel coordinates if segmentation available
     area_m2: Optional[float] = None         # Estimated real-world ground area in m² (Pothole, Manhole, Patch)
+    tilt_deg_used: Optional[float] = None   # Camera downward tilt angle used for this frame (degrees)
+    roll_deg_used: Optional[float] = None   # Camera roll angle used for this frame (degrees)
 
     @staticmethod
     def compute_center(bbox: Tuple[int, int, int, int]) -> Tuple[float, float]:
@@ -98,8 +100,10 @@ class DefectTrack:
     # Motion
     cumulative_homography: Optional[np.ndarray] = field(default=None, repr=False)
 
-    # Ground Area
+    # Ground Area & Camera Attitude History
     area_m2_history: List[float] = field(default_factory=list)
+    tilt_deg_history: List[float] = field(default_factory=list)
+    roll_deg_history: List[float] = field(default_factory=list)
     representative_area_m2: Optional[float] = None
 
     # Status
@@ -250,6 +254,11 @@ class FinalizedDefect:
     severity_score: Optional[float] = None
     measurement_data: Optional[Dict] = None
     real_area_m2: Optional[float] = None        # Physical ground area in m² (Pothole, Manhole, Patch)
+    area_sample_count: int = 0                  # Number of valid per-frame area measurements
+    area_iqr_m2: Optional[float] = None         # Interquartile range spread of area measurements (m²)
+    avg_tilt_deg: Optional[float] = None        # Average camera downward tilt angle during track (degrees)
+    avg_roll_deg: Optional[float] = None        # Average camera roll angle during track (degrees)
+    area_method: str = "fixed_tilt"             # "gravity_vector" or "fixed_tilt"
 
     @classmethod
     def from_track(cls, track: DefectTrack, crop_path: str = "",
@@ -297,24 +306,48 @@ class FinalizedDefect:
             source_track_intervals=[(track.first_frame, track.last_frame)],
         )
 
-        # Ground area estimation
-        if track.representative_area_m2 is not None:
+        # Ground area estimation with median aggregation and IQR spread
+        if track.area_m2_history:
+            fd.real_area_m2 = round(float(np.median(track.area_m2_history)), 4)
+            fd.area_sample_count = len(track.area_m2_history)
+            if len(track.area_m2_history) >= 2:
+                q75, q25 = np.percentile(track.area_m2_history, [75, 25])
+                fd.area_iqr_m2 = round(float(q75 - q25), 4)
+            else:
+                fd.area_iqr_m2 = 0.0
+        elif track.representative_area_m2 is not None:
             fd.real_area_m2 = round(float(track.representative_area_m2), 4)
-        elif track.area_m2_history:
-            fd.real_area_m2 = round(float(np.mean(track.area_m2_history)), 4)
-        
+            fd.area_sample_count = 1
+            fd.area_iqr_m2 = 0.0
+
+        if track.tilt_deg_history:
+            fd.avg_tilt_deg = round(float(np.mean(track.tilt_deg_history)), 2)
+            fd.area_method = "gravity_vector"
+        elif fd.real_area_m2 is not None:
+            fd.area_method = "fixed_tilt"
+
+        if track.roll_deg_history:
+            fd.avg_roll_deg = round(float(np.mean(track.roll_deg_history)), 2)
+
+        measurement_dict = {
+            "real_area_m2": fd.real_area_m2,
+            "area_sample_count": fd.area_sample_count,
+            "area_iqr_m2": fd.area_iqr_m2,
+            "avg_tilt_deg": fd.avg_tilt_deg,
+            "avg_roll_deg": fd.avg_roll_deg,
+            "area_method": fd.area_method,
+        }
+
         if segmentation_result:
             fd.segmentation_mask = segmentation_result.get("mask_path")
-            fd.measurement_data = {
+            measurement_dict.update({
                 "pixel_area": segmentation_result.get("pixel_area"),
                 "mask_quality_score": segmentation_result.get("mask_quality_score"),
                 "overlay_path": segmentation_result.get("overlay_path"),
-                "real_area_m2": fd.real_area_m2,
-            }
+            })
+            fd.measurement_data = measurement_dict
         elif fd.real_area_m2 is not None:
-            fd.measurement_data = {
-                "real_area_m2": fd.real_area_m2,
-            }
+            fd.measurement_data = measurement_dict
         return fd
 
     def merge_from(self, other: "FinalizedDefect"):
@@ -322,7 +355,7 @@ class FinalizedDefect:
         Merge another FinalizedDefect into this one (absorb duplicate).
         
         Updates temporal ranges, observation counts, confidence stats,
-        and keeps the best representative crop.
+        and keeps the best representative crop and area measurement.
         """
         # Temporal
         self.first_frame = min(self.first_frame, other.first_frame)
@@ -330,7 +363,7 @@ class FinalizedDefect:
         self.detection_duration_frames = self.last_frame - self.first_frame + 1
         self.frames_observed += other.frames_observed
 
-        # Confidence — keep the better stats
+        # Confidence & Area — keep the better stats
         if other.max_confidence > self.max_confidence:
             self.max_confidence = other.max_confidence
             self.max_confidence_frame = other.max_confidence_frame
@@ -341,14 +374,28 @@ class FinalizedDefect:
                 self.representative_crop_path = other.representative_crop_path
             if other.real_area_m2 is not None:
                 self.real_area_m2 = other.real_area_m2
-        elif self.real_area_m2 is None and other.real_area_m2 is not None:
-            self.real_area_m2 = other.real_area_m2
+                self.area_sample_count = self.area_sample_count + other.area_sample_count
+                self.area_iqr_m2 = other.area_iqr_m2
+                self.avg_tilt_deg = other.avg_tilt_deg
+                self.avg_roll_deg = other.avg_roll_deg
+                self.area_method = other.area_method
             if other.cumulative_homography is not None:
                 self.cumulative_homography = other.cumulative_homography
             if other.segmentation_mask is not None:
                 self.segmentation_mask = other.segmentation_mask
             if other.measurement_data is not None:
                 self.measurement_data = other.measurement_data
+        elif self.real_area_m2 is None and other.real_area_m2 is not None:
+            self.real_area_m2 = other.real_area_m2
+            self.area_sample_count = other.area_sample_count
+            self.area_iqr_m2 = other.area_iqr_m2
+            self.avg_tilt_deg = other.avg_tilt_deg
+            self.avg_roll_deg = other.avg_roll_deg
+            self.area_method = other.area_method
+            if other.measurement_data is not None:
+                self.measurement_data = other.measurement_data
+        elif other.real_area_m2 is not None:
+            self.area_sample_count += other.area_sample_count
 
         # Weighted average of confidences
         total_frames = self.frames_observed
@@ -418,6 +465,11 @@ class PipelineResult:
                     "pixel_area": d.measurement_data.get("pixel_area") if d.measurement_data else None,
                     "mask_path": d.segmentation_mask,
                     "real_area_m2": d.real_area_m2,
+                    "area_sample_count": d.area_sample_count,
+                    "area_iqr_m2": d.area_iqr_m2,
+                    "avg_tilt_deg": d.avg_tilt_deg,
+                    "avg_roll_deg": d.avg_roll_deg,
+                    "area_method": d.area_method,
                 }
                 for d in self.finalized_defects
             ],

@@ -33,25 +33,21 @@ DEFAULT_RDD_CLASSES = {
 
 class DefectDetector:
     """
-    YOLO + BoT-SORT detector for road defects.
+    YOLO + BoT-SORT detector for road defects with per-frame orientation support.
     
     Usage:
-        detector = DefectDetector(config)
+        detector = DefectDetector(config, orientation_provider=provider)
         for frame in video_frames:
             detections = detector.detect_and_track(frame, frame_idx)
-            # Each detection has a persistent track_id from BoT-SORT
-    
-    Key points:
-    - persist=True is required for BoT-SORT to maintain IDs across frames
-    - The custom botsort_config.yaml is used instead of the ultralytics default
-    - Class names are extracted dynamically from the model
     """
 
-    def __init__(self, config: PipelineConfig):
+    def __init__(self, config: PipelineConfig, orientation_provider=None):
         self.config = config
+        self.orientation_provider = orientation_provider
         self.model = None
         self.class_map: Dict[int, str] = {}
         self._model_loaded = False
+        self.rejection_counts: Dict[str, int] = {}
 
     def load_model(self):
         """
@@ -101,7 +97,8 @@ class DefectDetector:
     def detect_and_track(
         self,
         frame: np.ndarray,
-        frame_idx: int
+        frame_idx: int,
+        down_vector: Optional[np.ndarray] = None,
     ) -> List[Detection]:
         """
         Run YOLO detection + BoT-SORT tracking on a single frame.
@@ -109,6 +106,8 @@ class DefectDetector:
         Args:
             frame: BGR video frame
             frame_idx: Current frame index
+            down_vector: Optional per-frame unit gravity down vector (from accelerometer).
+                         If None and orientation_provider is set, auto-retrieved.
         
         Returns:
             List of Detection objects, each with a persistent track_id.
@@ -119,6 +118,10 @@ class DefectDetector:
 
         if self.model is None:
             return []
+
+        # Auto-retrieve down vector from orientation provider if not passed explicitly
+        if down_vector is None and self.orientation_provider is not None:
+            down_vector = self.orientation_provider.get_down_vector(frame_idx)
 
         # Resolve BoT-SORT config path
         tracker_config = self.config.resolve_path(
@@ -150,12 +153,14 @@ class DefectDetector:
                 logger.error("Default tracking also failed on frame %d: %s", frame_idx, e2)
                 return []
 
-        return self._parse_results(results, frame_idx)
+        return self._parse_results(results, frame_idx, down_vector=down_vector, frame=frame)
 
     def _parse_results(
         self,
         results,
-        frame_idx: int
+        frame_idx: int,
+        down_vector: Optional[np.ndarray] = None,
+        frame: Optional[np.ndarray] = None,
     ) -> List[Detection]:
         """
         Parse ultralytics tracking results into Detection objects.
@@ -171,17 +176,34 @@ class DefectDetector:
                 continue
 
             # Build camera parameters for ground projection from frame shape
-            img_h = r.orig_shape[0] if hasattr(r, "orig_shape") and r.orig_shape else 1080
-            img_w = r.orig_shape[1] if hasattr(r, "orig_shape") and r.orig_shape else 1920
+            img_h = r.orig_shape[0] if hasattr(r, "orig_shape") and r.orig_shape else getattr(self.config, "frame_height", 1080)
+            img_w = r.orig_shape[1] if hasattr(r, "orig_shape") and r.orig_shape else getattr(self.config, "frame_width", 1920)
             camera_params = CameraParams(
                 yc=getattr(self.config, "camera_height_m", 1.2),
                 tilt_deg=getattr(self.config, "camera_tilt_deg", 15.0),
                 f=getattr(self.config, "camera_focal_length_px", None),
+                fx=getattr(self.config, "camera_fx", None),
+                fy=getattr(self.config, "camera_fy", None),
                 cx=getattr(self.config, "camera_cx", None),
                 cy=getattr(self.config, "camera_cy", None),
                 image_width=img_w,
                 image_height=img_h,
             )
+
+            # Pre-calculate derived frame tilt and roll angles for logging and QC
+            if down_vector is not None:
+                n_norm = np.linalg.norm(down_vector)
+                if n_norm > 1e-8:
+                    n_unit = down_vector / n_norm
+                    down_z = float(np.clip(n_unit[2], -1.0, 1.0))
+                    frame_tilt_deg = float(np.degrees(np.arcsin(down_z)))
+                    frame_roll_deg = float(np.degrees(np.arctan2(-n_unit[0], n_unit[1])))
+                else:
+                    frame_tilt_deg = camera_params.tilt_deg
+                    frame_roll_deg = 0.0
+            else:
+                frame_tilt_deg = camera_params.tilt_deg
+                frame_roll_deg = 0.0
 
             for i, box in enumerate(boxes):
                 # Extract class and confidence
@@ -214,10 +236,42 @@ class DefectDetector:
                         if poly_cand is not None and len(poly_cand) >= 3:
                             polygon = poly_cand
 
-                # Calculate real-world ground area ONLY for Pothole, Manhole, and Patch
+                # Calculate real-world ground area with Quality Gating
                 area_m2 = None
+                tilt_used = None
+                roll_used = None
+
                 if is_area_eligible_class(class_name):
-                    area_m2 = compute_defect_area((x1, y1, x2, y2), camera_params, class_name, polygon)
+                    rejection_reasons: List[str] = []
+                    crop_patch = None
+                    if frame is not None and getattr(self.config, "min_laplacian_var", None) is not None:
+                        cy1, cy2 = max(0, y1), min(img_h, y2)
+                        cx1, cx2 = max(0, x1), min(img_w, x2)
+                        if cy2 > cy1 and cx2 > cx1:
+                            crop_patch = frame[cy1:cy2, cx1:cx2]
+
+                    area_m2 = compute_defect_area(
+                        bbox=(x1, y1, x2, y2),
+                        camera_params=camera_params,
+                        class_name=class_name,
+                        polygon=polygon,
+                        down=down_vector,
+                        min_tilt_deg=getattr(self.config, "min_tilt_deg", 3.0),
+                        max_tilt_deg=getattr(self.config, "max_tilt_deg", 60.0),
+                        max_abs_roll_deg=getattr(self.config, "max_abs_roll_deg", 30.0),
+                        min_ground_distance_m=getattr(self.config, "min_ground_distance_m", 0.5),
+                        max_ground_distance_m=getattr(self.config, "max_ground_distance_m", 8.0),
+                        crop_image=crop_patch,
+                        min_laplacian_var=getattr(self.config, "min_laplacian_var", None),
+                        rejection_sink=rejection_reasons,
+                    )
+
+                    for r_reason in rejection_reasons:
+                        self.rejection_counts[r_reason] = self.rejection_counts.get(r_reason, 0) + 1
+
+                    if area_m2 is not None:
+                        tilt_used = round(frame_tilt_deg, 2)
+                        roll_used = round(frame_roll_deg, 2)
 
                 detections.append(Detection(
                     track_id=track_id,
@@ -229,6 +283,8 @@ class DefectDetector:
                     frame_idx=frame_idx,
                     polygon=polygon,
                     area_m2=area_m2,
+                    tilt_deg_used=tilt_used,
+                    roll_deg_used=roll_used,
                 ))
 
         return detections
