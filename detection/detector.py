@@ -77,6 +77,16 @@ class DefectDetector:
         logger.info("Loading YOLO model from: %s", model_path)
         self.model = YOLO(model_path)
 
+        target_device = getattr(self.config, "device", None)
+        if target_device and str(target_device).startswith("cuda"):
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    self.model.to(target_device)
+                    logger.info("YOLO model allocated to GPU device: %s", target_device)
+            except Exception as e:
+                logger.warning("Could not allocate YOLO model to %s: %s", target_device, e)
+
         # Extract class names from model
         if hasattr(self.model, "names") and self.model.names:
             self.class_map = {
@@ -128,26 +138,34 @@ class DefectDetector:
             self.config.botsort_config_path
         )
 
+        target_device = getattr(self.config, "device", None)
+        use_half = bool(target_device and str(target_device).startswith("cuda") and getattr(self.config, "half_precision", True))
+
+        track_kwargs = {
+            "persist": True,
+            "tracker": tracker_config,
+            "conf": self.config.confidence_threshold,
+            "iou": self.config.iou_threshold,
+            "verbose": False,
+        }
+        if target_device:
+            track_kwargs["device"] = target_device
+        if use_half:
+            track_kwargs["half"] = True
+
         # Run tracking (model.track maintains state with persist=True)
         try:
             results = self.model.track(
                 frame,
-                persist=True,
-                tracker=tracker_config,
-                conf=self.config.confidence_threshold,
-                iou=self.config.iou_threshold,
-                verbose=False,
+                **track_kwargs
             )
         except Exception as e:
             logger.warning("Custom tracking config failed on frame %d: %s. Falling back to default 'botsort.yaml'", frame_idx, e)
             try:
+                track_kwargs["tracker"] = "botsort.yaml"
                 results = self.model.track(
                     frame,
-                    persist=True,
-                    tracker="botsort.yaml",
-                    conf=self.config.confidence_threshold,
-                    iou=self.config.iou_threshold,
-                    verbose=False,
+                    **track_kwargs
                 )
             except Exception as e2:
                 logger.error("Default tracking also failed on frame %d: %s", frame_idx, e2)

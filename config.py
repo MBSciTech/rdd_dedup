@@ -115,6 +115,8 @@ class PipelineConfig:
 
     # ── Performance ──
     enable_gpu: bool = True
+    device: str = "cpu"                 # "cpu", "cuda", "cuda:0", etc.
+    half_precision: bool = True         # Enable FP16 inference on GPU
     batch_size: int = 1
 
     # ── Derived paths (set during initialization) ──
@@ -215,6 +217,8 @@ class PipelineConfig:
             "save_annotated_video": self.save_annotated_video,
             "save_crops": self.save_crops,
             "enable_gpu": self.enable_gpu,
+            "device": self.device,
+            "half_precision": self.half_precision,
         }
 
     # ── Uppercase Aliases for Specification Compatibility ──
